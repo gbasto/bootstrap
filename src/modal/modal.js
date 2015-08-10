@@ -282,6 +282,8 @@ angular.module('ui.bootstrap.modal', [])
         } else {
           body.focus();
         }
+
+        modalInstance.isOpen = false;
       }
 
       function checkRemoveBackdrop() {
@@ -434,7 +436,7 @@ angular.module('ui.bootstrap.modal', [])
           modalWindow.value.modalScope.$$uibDestructionScheduled = true;
           modalWindow.value.deferred.resolve(result);
           removeModalWindow(modalInstance, modalWindow.value.modalOpener);
-          return true;
+          return modalInstance;
         }
         return !modalWindow;
       };
@@ -445,7 +447,7 @@ angular.module('ui.bootstrap.modal', [])
           modalWindow.value.modalScope.$$uibDestructionScheduled = true;
           modalWindow.value.deferred.reject(reason);
           removeModalWindow(modalInstance, modalWindow.value.modalOpener);
-          return true;
+          return modalInstance;
         }
         return !modalWindow;
       };
@@ -546,17 +548,84 @@ angular.module('ui.bootstrap.modal', [])
             return promisesArr;
           }
 
-          $modal.open = function (modalOptions) {
+          $modal.create = function (modalOptions) {
 
             var modalResultDeferred = $q.defer();
             var modalOpenedDeferred = $q.defer();
             var modalRenderDeferred = $q.defer();
+
+            var modalScope = (modalOptions.scope || $rootScope).$new();
 
             //prepare an instance of a modal to be injected into controllers and returned to a caller
             var modalInstance = {
               result: modalResultDeferred.promise,
               opened: modalOpenedDeferred.promise,
               rendered: modalRenderDeferred.promise,
+              isOpen: false,
+              scope: modalScope,
+              open: function () {
+                var templateAndResolvePromise =
+                  $q.all([getTemplatePromise(modalOptions)].concat(getResolvePromises(modalOptions.resolve)));
+
+
+                templateAndResolvePromise.then(function resolveSuccess(tplAndVars) {
+
+                  modalScope.$close = modalInstance.close;
+                  modalScope.$dismiss = modalInstance.dismiss;
+
+                  modalScope.$on('$destroy', function() {
+                    if (!modalScope.$$uibDestructionScheduled) {
+                      modalScope.$dismiss('$uibUnscheduledDestruction');
+                    }
+                  });
+
+                  var ctrlInstance, ctrlLocals = {};
+                  var resolveIter = 1;
+
+                  //controllers
+                  if (modalOptions.controller) {
+                    ctrlLocals.$scope = modalScope;
+                    ctrlLocals.$modalInstance = modalInstance;
+                    angular.forEach(modalOptions.resolve, function (value, key) {
+                      ctrlLocals[key] = tplAndVars[resolveIter++];
+                    });
+
+                    ctrlInstance = $controller(modalOptions.controller, ctrlLocals);
+                    if (modalOptions.controllerAs) {
+                      if (modalOptions.bindToController) {
+                        angular.extend(ctrlInstance, modalScope);
+                      }
+
+                      modalScope[modalOptions.controllerAs] = ctrlInstance;
+                    }
+                  }
+
+                  $modalStack.open(modalInstance, {
+                    scope: modalScope,
+                    deferred: modalResultDeferred,
+                    renderDeferred: modalRenderDeferred,
+                    content: tplAndVars[0],
+                    animation: modalOptions.animation,
+                    backdrop: modalOptions.backdrop,
+                    keyboard: modalOptions.keyboard,
+                    backdropClass: modalOptions.backdropClass,
+                    windowClass: modalOptions.windowClass,
+                    windowTemplateUrl: modalOptions.windowTemplateUrl,
+                    size: modalOptions.size,
+                    openedClass: modalOptions.openedClass
+                  });
+
+                }, function resolveError(reason) {
+                  modalResultDeferred.reject(reason);
+                });
+
+                templateAndResolvePromise.then(function () {
+                  modalOpenedDeferred.resolve(true);
+                  modalInstance.isOpen = true;
+                }, function (reason) {
+                  modalOpenedDeferred.reject(reason);
+                });
+              },
               close: function (result) {
                 return $modalStack.close(modalInstance, result);
               },
@@ -573,68 +642,6 @@ angular.module('ui.bootstrap.modal', [])
             if (!modalOptions.template && !modalOptions.templateUrl) {
               throw new Error('One of template or templateUrl options is required.');
             }
-
-            var templateAndResolvePromise =
-              $q.all([getTemplatePromise(modalOptions)].concat(getResolvePromises(modalOptions.resolve)));
-
-
-            templateAndResolvePromise.then(function resolveSuccess(tplAndVars) {
-
-              var modalScope = (modalOptions.scope || $rootScope).$new();
-              modalScope.$close = modalInstance.close;
-              modalScope.$dismiss = modalInstance.dismiss;
-
-              modalScope.$on('$destroy', function() {
-                if (!modalScope.$$uibDestructionScheduled) {
-                  modalScope.$dismiss('$uibUnscheduledDestruction');
-                }
-              });
-
-              var ctrlInstance, ctrlLocals = {};
-              var resolveIter = 1;
-
-              //controllers
-              if (modalOptions.controller) {
-                ctrlLocals.$scope = modalScope;
-                ctrlLocals.$modalInstance = modalInstance;
-                angular.forEach(modalOptions.resolve, function (value, key) {
-                  ctrlLocals[key] = tplAndVars[resolveIter++];
-                });
-
-                ctrlInstance = $controller(modalOptions.controller, ctrlLocals);
-                if (modalOptions.controllerAs) {
-                  if (modalOptions.bindToController) {
-                    angular.extend(ctrlInstance, modalScope);
-                  }
-
-                  modalScope[modalOptions.controllerAs] = ctrlInstance;
-                }
-              }
-
-              $modalStack.open(modalInstance, {
-                scope: modalScope,
-                deferred: modalResultDeferred,
-                renderDeferred: modalRenderDeferred,
-                content: tplAndVars[0],
-                animation: modalOptions.animation,
-                backdrop: modalOptions.backdrop,
-                keyboard: modalOptions.keyboard,
-                backdropClass: modalOptions.backdropClass,
-                windowClass: modalOptions.windowClass,
-                windowTemplateUrl: modalOptions.windowTemplateUrl,
-                size: modalOptions.size,
-                openedClass: modalOptions.openedClass
-              });
-
-            }, function resolveError(reason) {
-              modalResultDeferred.reject(reason);
-            });
-
-            templateAndResolvePromise.then(function () {
-              modalOpenedDeferred.resolve(true);
-            }, function (reason) {
-              modalOpenedDeferred.reject(reason);
-            });
 
             return modalInstance;
           };
